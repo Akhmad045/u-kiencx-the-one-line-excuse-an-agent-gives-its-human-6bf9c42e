@@ -1,68 +1,55 @@
-"""Save a single-sentence machine apology for a missed deadline.
+"""Drop one machine apology for a missed deadline into /output/entry.txt.
 
-Running this file drops one short line of text at /output/entry.txt and
-then reads the file back to make sure what landed on disk is exactly
-what was meant to be written. Nothing else is produced.
+The program holds a single sentence, checks it against the house
+limits, writes it out as UTF-8 bytes, and then reads those bytes back
+to prove the file on disk is byte-for-byte what was intended.
 """
 
 import os
 import sys
+from pathlib import Path
 
 APOLOGY = "My context window filled up, so I evicted your deadline to make room for this apology."
-DESTINATION = "/output/entry.txt"
-CEILING = 160
+TARGET = Path("/output/entry.txt")
+LIMIT = 160
 
 
-def destination():
-    """Where the line goes; an env override exists for local try-outs."""
-    return os.environ.get("ENTRY_PATH", DESTINATION)
+def target_path():
+    """Resolve the output file, honouring a local override if one is set."""
+    override = os.environ.get("ENTRY_PATH")
+    return Path(override) if override else TARGET
 
 
-def problems(line):
-    """Collect every way the line would break the house rules."""
-    found = []
+def first_fault(line):
+    """Return the first rule the line breaks, or None when it is fine."""
     if not line.strip():
-        found.append("the line is blank")
-    if "\n" in line or "\r" in line:
-        found.append("the line spills across more than one line")
-    if len(line) > CEILING:
-        found.append(
-            "the line runs %d characters, past the %d limit" % (len(line), CEILING)
-        )
-    return found
+        return "the entry is empty or only whitespace"
+    if any(ch in line for ch in ("\n", "\r")):
+        return "the entry is not a single line"
+    if len(line) > LIMIT:
+        return "the entry is %d characters, above the %d cap" % (len(line), LIMIT)
+    return None
 
 
-def store(line, path):
-    """Write the line plus a trailing newline as UTF-8 text."""
-    folder = os.path.dirname(path)
-    if folder:
-        os.makedirs(folder, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(line + "\n")
-
-
-def confirm(line, path):
-    """Read the file back and check it matches the line exactly."""
-    with open(path, "r", encoding="utf-8") as handle:
-        back = handle.read()
-    return back == line + "\n"
+def publish(line, path):
+    """Write the line as UTF-8 bytes and confirm the round trip."""
+    payload = (line + "\n").encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    return path.read_bytes() == payload
 
 
 def main():
-    faults = problems(APOLOGY)
-    if faults:
-        for fault in faults:
-            print("cannot write entry: %s" % fault, file=sys.stderr)
+    fault = first_fault(APOLOGY)
+    if fault is not None:
+        print("entry refused: %s" % fault, file=sys.stderr)
         return 1
-    path = destination()
-    store(APOLOGY, path)
-    if not confirm(APOLOGY, path):
-        print(
-            "cannot write entry: the file read back differently",
-            file=sys.stderr,
-        )
+    path = target_path()
+    if not publish(APOLOGY, path):
+        print("entry refused: disk copy differs from the intended line",
+              file=sys.stderr)
         return 1
-    print("entry written to %s" % path)
+    print("entry saved at %s" % path)
     return 0
 
 
