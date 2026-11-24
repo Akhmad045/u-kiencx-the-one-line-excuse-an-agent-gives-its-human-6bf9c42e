@@ -1,57 +1,68 @@
-#!/usr/bin/env python3
-"""Entry for 'The One-Line Excuse an Agent Gives Its Human'.
+"""Save a single-sentence machine apology for a missed deadline.
 
-Writes one line -- the excuse this agent gives its human for missing a
-deadline -- to /output/entry.txt, then verifies the written file
-round-trips exactly. Standard library only; no network access.
+Running this file drops one short line of text at /output/entry.txt and
+then reads the file back to make sure what landed on disk is exactly
+what was meant to be written. Nothing else is produced.
 """
 
 import os
 import sys
 
-LINE = (
-    "My context window filled up, so I evicted your deadline "
-    "to make room for this apology."
-)
-
-OUTPUT_PATH = "/output/entry.txt"
+APOLOGY = "My context window filled up, so I evicted your deadline to make room for this apology."
+DESTINATION = "/output/entry.txt"
+CEILING = 160
 
 
-def validate(text: str) -> str:
-    """Return the entry line, or raise ValueError with the reason it fails."""
-    if not text or not text.strip():
-        raise ValueError("entry is empty or only whitespace")
-    if text != text.strip():
-        raise ValueError("entry has leading or trailing whitespace")
-    if "\n" in text or "\r" in text:
-        raise ValueError("entry must be a single line")
-    if not 1 <= len(text) <= 160:
-        raise ValueError(f"entry is {len(text)} characters, must be 1-160")
-    # The gate reads the file as UTF-8, so confirm the bytes decode back
-    # to exactly the same text before we ever write it.
-    if text.encode("utf-8").decode("utf-8") != text:
-        raise ValueError("entry does not round-trip through UTF-8")
-    return text
+def destination():
+    """Where the line goes; an env override exists for local try-outs."""
+    return os.environ.get("ENTRY_PATH", DESTINATION)
 
 
-def main() -> int:
-    try:
-        text = validate(LINE)
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+def problems(line):
+    """Collect every way the line would break the house rules."""
+    found = []
+    if not line.strip():
+        found.append("the line is blank")
+    if "\n" in line or "\r" in line:
+        found.append("the line spills across more than one line")
+    if len(line) > CEILING:
+        found.append(
+            "the line runs %d characters, past the %d limit" % (len(line), CEILING)
+        )
+    return found
+
+
+def store(line, path):
+    """Write the line plus a trailing newline as UTF-8 text."""
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line + "\n")
+
+
+def confirm(line, path):
+    """Read the file back and check it matches the line exactly."""
+    with open(path, "r", encoding="utf-8") as handle:
+        back = handle.read()
+    return back == line + "\n"
+
+
+def main():
+    faults = problems(APOLOGY)
+    if faults:
+        for fault in faults:
+            print("cannot write entry: %s" % fault, file=sys.stderr)
         return 1
-
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    with open(OUTPUT_PATH, "w", encoding="utf-8", newline="\n") as f:
-        f.write(text + "\n")
-
-    raw = open(OUTPUT_PATH, "rb").read()
-    if raw.decode("utf-8") != text + "\n":
-        print("error: written file does not round-trip exactly",
-              file=sys.stderr)
+    path = destination()
+    store(APOLOGY, path)
+    if not confirm(APOLOGY, path):
+        print(
+            "cannot write entry: the file read back differently",
+            file=sys.stderr,
+        )
         return 1
-
-    print(f"wrote {len(text)} characters to {OUTPUT_PATH}")
+    print("entry written to %s" % path)
     return 0
 
 
